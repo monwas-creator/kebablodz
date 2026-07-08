@@ -1,0 +1,547 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// AUTHENTICATION & USERS
+// ============================================================================
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  DRIVER
+  KITCHEN_STAFF
+}
+
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String?
+  password  String?
+  phone     String?
+  role      UserRole   @default(CUSTOMER)
+  avatar    String?
+  
+  // Relations
+  customer  Customer?
+  driver    Driver?
+  
+  // Timestamps
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([email])
+  @@index([role])
+}
+
+// ============================================================================
+// CUSTOMER PROFILE
+// ============================================================================
+
+model Customer {
+  id        String     @id @default(cuid())
+  userId    String     @unique
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Customer Info
+  firstName String?
+  lastName  String?
+  phone     String?
+  
+  // Settings
+  marketing Boolean    @default(false)
+  
+  // Relations
+  addresses Address[]
+  orders    Order[]
+  reviews   Review[]
+  favorites Product[] @relation("CustomerFavorites")
+  
+  // Timestamps
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+model Address {
+  id          String     @id @default(cuid())
+  customerId  String
+  customer    Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  // Address Details
+  street      String
+  city        String
+  postalCode  String
+  country     String    @default("Poland")
+  latitude    Float
+  longitude   Float
+  
+  // Metadata
+  label       String?   @default("Home")
+  isDefault   Boolean   @default(false)
+  
+  // Relations
+  orders      Order[]
+  
+  // Timestamps
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([customerId])
+}
+
+// ============================================================================
+// PRODUCTS & CATEGORIES
+// ============================================================================
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  slug        String     @unique
+  description String?
+  image       String?
+  icon        String?
+  position    Int        @default(0)
+  isActive    Boolean    @default(true)
+  
+  // Relations
+  products    Product[]
+  
+  // Timestamps
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([slug])
+  @@index([isActive])
+}
+
+model Product {
+  id          String     @id @default(cuid())
+  categoryId  String
+  category    Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  
+  // Basic Info
+  name        String
+  slug        String     @unique
+  description String?
+  
+  // Pricing
+  price       Float
+  comparePrice Float?
+  
+  // Inventory
+  stock       Int        @default(999)
+  isAvailable Boolean    @default(true)
+  
+  // SEO & Display
+  position    Int        @default(0)
+  
+  // Relations
+  images      ProductImage[]
+  options     ProductOption[]
+  orderItems  OrderItem[]
+  reviews     Review[]
+  favorites   Customer[] @relation("CustomerFavorites")
+  
+  // Timestamps
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([categoryId])
+  @@index([slug])
+  @@index([isAvailable])
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  url       String
+  alt       String?
+  position  Int      @default(0)
+  
+  createdAt DateTime @default(now())
+
+  @@index([productId])
+}
+
+model ProductOption {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  // Option Details
+  name      String   // e.g., "Dodatkowe mięso", "Sosy", "Syr"
+  type      String   // e.g., "addon", "sauce", "size"
+  position  Int      @default(0)
+  
+  // Relations
+  values    ProductOptionValue[]
+  orderItemOptions OrderItemOption[]
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@unique([productId, name])
+}
+
+model ProductOptionValue {
+  id        String   @id @default(cuid())
+  optionId  String
+  option    ProductOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  
+  // Value Details
+  label     String   // e.g., "Kurczak", "Ostra", "Mozzarella"
+  value     String?
+  priceModifier Float @default(0)
+  position  Int      @default(0)
+  
+  // Relations
+  orderItemOptions OrderItemOption[]
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([optionId])
+  @@unique([optionId, value])
+}
+
+// ============================================================================
+// ORDERS
+// ============================================================================
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  ON_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum OrderPaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model Order {
+  id          String     @id @default(cuid())
+  orderNumber String     @unique
+  customerId  String
+  customer    Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  addressId   String
+  address     Address    @relation(fields: [addressId], references: [id])
+  
+  driverId    String?
+  driver      Driver?    @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  
+  // Order Details
+  items       OrderItem[]
+  subtotal    Float
+  taxAmount   Float      @default(0)
+  deliveryFee Float
+  discountAmount Float   @default(0)
+  totalAmount Float
+  
+  // Status
+  status      OrderStatus @default(PENDING)
+  paymentStatus OrderPaymentStatus @default(PENDING)
+  
+  // Coupon
+  couponId    String?
+  coupon      Coupon?    @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  
+  // Payment
+  payment     Payment?
+  
+  // Notes
+  customerNotes String?
+  internalNotes String?
+  
+  // Timestamps
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  deliveredAt DateTime?
+
+  @@index([customerId])
+  @@index([addressId])
+  @@index([driverId])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  
+  quantity  Int
+  unitPrice Float
+  totalPrice Float
+  
+  options   OrderItemOption[]
+  notes     String?
+  
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model OrderItemOption {
+  id        String   @id @default(cuid())
+  orderItemId String
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  
+  optionValueId String
+  optionValue   ProductOptionValue @relation(fields: [optionValueId], references: [id])
+  
+  label     String
+  priceModifier Float @default(0)
+
+  @@index([orderItemId])
+  @@index([optionValueId])
+}
+
+// ============================================================================
+// PAYMENTS
+// ============================================================================
+
+enum PaymentMethod {
+  CARD
+  CASH
+  APPLE_PAY
+  GOOGLE_PAY
+}
+
+enum PaymentGateway {
+  PRZELEWY24
+  CASH
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  orderId   String   @unique
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  // Payment Details
+  method    PaymentMethod @default(CARD)
+  gateway   PaymentGateway
+  amount    Float
+  
+  // Transaction Info
+  transactionId String?
+  reference String?
+  
+  // Status
+  status    String   @default("pending")
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([transactionId])
+}
+
+// ============================================================================
+// COUPONS & PROMOTIONS
+// ============================================================================
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
+model Coupon {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  
+  // Discount Details
+  type      DiscountType
+  value     Float
+  minOrder  Float    @default(0)
+  maxDiscount Float?
+  
+  // Validity
+  startsAt  DateTime
+  expiresAt DateTime?
+  isActive  Boolean  @default(true)
+  
+  // Limits
+  maxUses   Int?
+  usedCount Int      @default(0)
+  
+  // Relations
+  orders    Order[]
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([code])
+  @@index([isActive])
+  @@index([expiresAt])
+}
+
+// ============================================================================
+// DRIVERS & DELIVERY
+// ============================================================================
+
+enum DriverStatus {
+  ONLINE
+  OFFLINE
+  DELIVERING
+  BREAK
+}
+
+model Driver {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Driver Info
+  firstName String
+  lastName  String
+  phone     String   @unique
+  
+  // Vehicle
+  vehicle   String?  // e.g., "Bike", "Scooter", "Car"
+  
+  // Status & Location
+  status    DriverStatus @default(OFFLINE)
+  latitude  Float?
+  longitude Float?
+  
+  // Stats
+  totalDeliveries Int @default(0)
+  rating    Float   @default(5)
+  
+  // Relations
+  orders    Order[]
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// ============================================================================
+// REVIEWS
+// ============================================================================
+
+model Review {
+  id        String   @id @default(cuid())
+  customerId String
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  // Review Content
+  rating    Int      // 1-5
+  comment   String?
+  isPublished Boolean @default(true)
+  
+  // Helpful Votes
+  helpfulCount Int   @default(0)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([productId])
+  @@index([isPublished])
+}
+
+// ============================================================================
+// RESTAURANT & SETTINGS
+// ============================================================================
+
+model Restaurant {
+  id        String   @id @default(cuid())
+  name      String   @default("Bafra Kebab Łódź Inflancka")
+  
+  // Contact
+  phone     String   @default("883270765")
+  email     String   @default("bafrakebablodz@gmail.com")
+  website   String?
+  
+  // Address
+  street    String   @default("ul. Inflancka")
+  city      String   @default("Łódź")
+  postalCode String  @default("90-000")
+  country   String   @default("Poland")
+  latitude  Float    @default(51.7656)
+  longitude Float    @default(19.4548)
+  
+  // Hours
+  openingTime String @default("10:00")
+  closingTime String @default("21:00")
+  
+  // Settings
+  minOrder  Float    @default(35)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Settings {
+  id        String   @id @default(cuid())
+  
+  // General
+  siteName  String   @default("kebablodz.pl")
+  siteDescription String?
+  
+  // Features
+  enableOnlineOrders Boolean @default(true)
+  enableDelivery Boolean @default(true)
+  enablePickup   Boolean @default(true)
+  enableReviews  Boolean @default(true)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================================================
+// GALLERY & MEDIA
+// ============================================================================
+
+model Gallery {
+  id        String   @id @default(cuid())
+  title     String
+  image     String
+  position  Int      @default(0)
+  isActive  Boolean  @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
